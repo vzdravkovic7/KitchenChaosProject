@@ -6,32 +6,50 @@ using Unity.Services.Authentication;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-public class KitchenGameMultiplayer : NetworkBehaviour
-{
+public class KitchenGameMultiplayer : NetworkBehaviour {
+
+
     public const int MAX_PLAYER_AMOUNT = 4;
     private const string PLAYER_PREFS_PLAYER_NAME_MULTIPLAYER = "PlayerNameMultiplayer";
 
+
     public static KitchenGameMultiplayer Instance { get; private set; }
+
+
+    public static bool playMultiplayer = true;
+
 
     public event EventHandler OnTryingToJoinGame;
     public event EventHandler OnFailedToJoinGame;
     public event EventHandler OnPlayerDataNetworkListChanged;
 
+
     [SerializeField] private KitchenObjectListSO kitchenObjectListSO;
     [SerializeField] private List<Color> playerColorList;
 
+
     private NetworkList<PlayerData> playerDataNetworkList;
     private string playerName;
+
+
 
     private void Awake() {
         Instance = this;
 
         DontDestroyOnLoad(gameObject);
 
-        playerName = PlayerPrefs.GetString(PLAYER_PREFS_PLAYER_NAME_MULTIPLAYER,"PlayerName" + UnityEngine.Random.Range(100, 1000));
+        playerName = PlayerPrefs.GetString(PLAYER_PREFS_PLAYER_NAME_MULTIPLAYER, "PlayerName" + UnityEngine.Random.Range(100, 1000));
 
         playerDataNetworkList = new NetworkList<PlayerData>();
         playerDataNetworkList.OnListChanged += PlayerDataNetworkList_OnListChanged;
+    }
+
+    private void Start() {
+        if (!playMultiplayer) {
+            // Singleplayer
+            StartHost();
+            Loader.LoadNetwork(Loader.Scene.GameScene);
+        }
     }
 
     public string GetPlayerName() {
@@ -56,10 +74,9 @@ public class KitchenGameMultiplayer : NetworkBehaviour
     }
 
     private void NetworkManager_Server_OnClientDisconnectCallback(ulong clientId) {
-        for(int i = 0; i <playerDataNetworkList.Count; i++) {
+        for (int i = 0; i < playerDataNetworkList.Count; i++) {
             PlayerData playerData = playerDataNetworkList[i];
-
-            if(playerData.clientId == clientId) {
+            if (playerData.clientId == clientId) {
                 // Disconnected!
                 playerDataNetworkList.RemoveAt(i);
             }
@@ -76,13 +93,13 @@ public class KitchenGameMultiplayer : NetworkBehaviour
     }
 
     private void NetworkManager_ConnectionApprovalCallback(NetworkManager.ConnectionApprovalRequest connectionApprovalRequest, NetworkManager.ConnectionApprovalResponse connectionApprovalResponse) {
-        if(SceneManager.GetActiveScene().name != Loader.Scene.CharacterSelectScene.ToString()) {
+        if (SceneManager.GetActiveScene().name != Loader.Scene.CharacterSelectScene.ToString()) {
             connectionApprovalResponse.Approved = false;
             connectionApprovalResponse.Reason = "Game has already started";
             return;
         }
 
-        if(NetworkManager.Singleton.ConnectedClientsIds.Count >= MAX_PLAYER_AMOUNT) {
+        if (NetworkManager.Singleton.ConnectedClientsIds.Count >= MAX_PLAYER_AMOUNT) {
             connectionApprovalResponse.Approved = false;
             connectionApprovalResponse.Reason = "Game is full";
             return;
@@ -133,10 +150,18 @@ public class KitchenGameMultiplayer : NetworkBehaviour
     public void SpawnKitchenObject(KitchenObjectSO kitchenObjectSO, IKitchenObjectParent kitchenObjectParent) {
         SpawnKitchenObjectServerRpc(GetKitchenObjectSOIndex(kitchenObjectSO), kitchenObjectParent.GetNetworkObject());
     }
-    
+
     [ServerRpc(RequireOwnership = false)]
-    public void SpawnKitchenObjectServerRpc(int kitchenObjectSOIndex, NetworkObjectReference kitchenObjectParentNetworkObjectReference) {
+    private void SpawnKitchenObjectServerRpc(int kitchenObjectSOIndex, NetworkObjectReference kitchenObjectParentNetworkObjectReference) {
         KitchenObjectSO kitchenObjectSO = GetKitchenObjectSOFromIndex(kitchenObjectSOIndex);
+
+        kitchenObjectParentNetworkObjectReference.TryGet(out NetworkObject kitchenObjectParentNetworkObject);
+        IKitchenObjectParent kitchenObjectParent = kitchenObjectParentNetworkObject.GetComponent<IKitchenObjectParent>();
+
+        if (kitchenObjectParent.HasKitchenObject()) {
+            // Parent already spawned an object
+            return;
+        }
 
         Transform kitchenObjectTransform = Instantiate(kitchenObjectSO.prefab);
 
@@ -145,8 +170,6 @@ public class KitchenGameMultiplayer : NetworkBehaviour
 
         KitchenObject kitchenObject = kitchenObjectTransform.GetComponent<KitchenObject>();
 
-        kitchenObjectParentNetworkObjectReference.TryGet(out NetworkObject kitchenObjectParentNetworkObject);
-        IKitchenObjectParent kitchenObjectParent = kitchenObjectParentNetworkObject.GetComponent<IKitchenObjectParent>();
 
         kitchenObject.SetKitchenObjectParent(kitchenObjectParent);
     }
@@ -159,6 +182,8 @@ public class KitchenGameMultiplayer : NetworkBehaviour
         return kitchenObjectListSO.kitchenObjectSOList[kitchenObjectSOIndex];
     }
 
+
+
     public void DestroyKitchenObject(KitchenObject kitchenObject) {
         DestroyKitchenObjectServerRpc(kitchenObject.NetworkObject);
     }
@@ -166,6 +191,12 @@ public class KitchenGameMultiplayer : NetworkBehaviour
     [ServerRpc(RequireOwnership = false)]
     private void DestroyKitchenObjectServerRpc(NetworkObjectReference kitchenObjectNetworkObjectReference) {
         kitchenObjectNetworkObjectReference.TryGet(out NetworkObject kitchenObjectNetworkObject);
+
+        if (kitchenObjectNetworkObject == null) {
+            // This object is already destroyed
+            return;
+        }
+
         KitchenObject kitchenObject = kitchenObjectNetworkObject.GetComponent<KitchenObject>();
 
         ClearKitchenObjectOnParentClientRpc(kitchenObjectNetworkObjectReference);
@@ -181,17 +212,18 @@ public class KitchenGameMultiplayer : NetworkBehaviour
         kitchenObject.ClearKitchenObjectOnParent();
     }
 
+
+
     public bool IsPlayerIndexConnected(int playerIndex) {
         return playerIndex < playerDataNetworkList.Count;
     }
 
     public int GetPlayerDataIndexFromClientId(ulong clientId) {
-        for(int i = 0; i < playerDataNetworkList.Count; i++) {
+        for (int i = 0; i < playerDataNetworkList.Count; i++) {
             if (playerDataNetworkList[i].clientId == clientId) {
                 return i;
             }
         }
-
         return -1;
     }
 
@@ -237,8 +269,8 @@ public class KitchenGameMultiplayer : NetworkBehaviour
     }
 
     private bool IsColorAvailable(int colorId) {
-        foreach(PlayerData playerData in playerDataNetworkList) {
-            if(playerData.colorId == colorId) {
+        foreach (PlayerData playerData in playerDataNetworkList) {
+            if (playerData.colorId == colorId) {
                 // Already in use
                 return false;
             }
@@ -247,7 +279,7 @@ public class KitchenGameMultiplayer : NetworkBehaviour
     }
 
     private int GetFirstUnusedColorId() {
-        for(int i = 0; i < playerColorList.Count; i++) {
+        for (int i = 0; i < playerColorList.Count; i++) {
             if (IsColorAvailable(i)) {
                 return i;
             }
@@ -259,4 +291,5 @@ public class KitchenGameMultiplayer : NetworkBehaviour
         NetworkManager.Singleton.DisconnectClient(clientId);
         NetworkManager_Server_OnClientDisconnectCallback(clientId);
     }
+
 }
